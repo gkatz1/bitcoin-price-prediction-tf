@@ -158,6 +158,8 @@ def train(train_params):
         # in order to calculate rmse we need to transform data back to a price
         prediction_inverse = inverse_transforms(prediction, scaler)
         y_inverse = inverse_transforms(y, scaler)
+        prediction_inverse = prediction_inverse.squeeze()[1:]
+        y_test_inverse = y_test_inverse.squeeze()
         rmse = sqrt(mean_squared_error(prediction_inverse, y_inverse))
         tf.summary.scalar('rmse', rmse)
         
@@ -235,10 +237,11 @@ def model(x, init_state):
                                                      
                                             
 
-def inverse_transforms():
+def inverse_transforms(data, scaler):
     """
     invese transforms:
         1. scaling
         2. stationary
     """
-    pass
+    data_inverse = scaler.inverse_transform(data.reshape(-1, 1))
+
