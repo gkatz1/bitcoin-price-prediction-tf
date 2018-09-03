@@ -86,20 +86,23 @@ def get_hyperparams()
         'look_back' : 1,
         'prediction_step' : 1
         'train_set_fraction' : 0.75,
+        'num_epochs' : 100,
         'batch_size' : 1,
-        'n_hidden' : 256
+        'n_hidden' : 256,
+        'num_layers' : 2,
+        'input_num_features' : 1,
+        'output_num_features' : 1
     }
     return params
 
 
 # TODO
 # what are the shapes of: x, init_state, outputs, outputs[:, -1, :]
-def model(x, init_state):
+def model(x, model_params, init_state, reset_state):
     # x is of shape e.g. [16, 5]
     # y, pred are of shape e.g. [16, 1]
-    n_hidden = model_params['n_hidden']   # 256 ?
+    n_hidden = model_params['n_hidden']
     learning_rate = model_params['learning_rate']
-    scaler = model_params['scaler']
     num_layers = model_params['num_layers']
 
     weights = {
@@ -131,9 +134,10 @@ def train(train_params):
     debug = True
     
     data_params = train_params['data_params']
-    batch_size = train_params['batch_size']
-    num_epcohs = train_params['num_epochs']   # add early stopping, save best model
-    input_num_features = train_params['input_num_features']  # 1
+    model_params = train_params['model_params']
+    batch_size = model_params['batch_size']
+    num_epcohs = model_params['num_epochs']   # add early stopping, save best model
+    input_num_features = model_params['input_num_features']  # 1
     output_num_features = train_params['output_num_features']
     
     X_train, y_train, X_validation, y_validation, scaler = preprocess_data(data_params)
@@ -164,12 +168,13 @@ def train(train_params):
     x = tf.placeholder(tf.float32, [None, look_back, input_num_features]) # 1 feature (price)
     y = tf.placeholder(tf.float32, [None, output_num_features])
     # WHAT IS THE SHAPE OF init_state ?
-    init_state = None # tf.placeholder(??)
     
+    ### current_state = tf.placeholder(tf.float32, [model_params['num_layers'], 2, batch_size, n_hidden])
     reset_state = tf.placeholder(tf.bool)
     
-    prediction, current_state = model(x, init_state)
-    
+    ### prediction, current_state = model(x, model_params, current_state, reset_state)
+    prediction, current_state = model(x, model_params, None, reset_state)
+
     with tf.name_scope('Metrices')
         loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=prediction, labels=y))
         tf.summary.scalar('loss', loss)
@@ -193,14 +198,20 @@ def train(train_params):
             train_rmse = 0.0
             for i, data in tqdm.tqdm(enumerate(train_loader, 0), total=num_training_batches):
                 _x,_y = data
+                _x = _x.reshape((-1, look_back, input_num_features))
+                _y = _y.reshape((-1, output_num_features))
+                ### _loss, _rmse, _, _summary, _current_state = sess.run([loss, rmse, optimizer,
                 _loss, _rmse, _, _summary, _current_state = sess.run([loss, rmse, optimizer,
                     merged_summary, current_state],
                     feed_dict = {
                     x: _x,
                     y = _y,
-                    current_state: _current_state,
-                    reset_state: True if i == 0 else False
+                    ### current_state: _current_state,
+                    ### reset_state: True if i == 0 else False
+                    reset_state: True
                     })
+                    print("state shape = {}".format(tf.shape(_current_state))
+                    raise NotImplementedError()
                     
                 train_rmse += _rmse
                 train_writer.add_summary(_summary, i + num_training_batches * epoch)
@@ -237,13 +248,11 @@ def main(args):
 
     train_params = {
         'data_params' : data_params,
-        'batch_size' : hyper_params['batch_size']
+        'model_params' : hyper_params
     }
     
     # print("==> training")
     train(train_params)
-
-
 
 
 # is input of e.g. size = 3 means that we input each sample into one cell
