@@ -13,7 +13,7 @@ from tensorflow.contrib import rnn
 tf.reset_default_graph()
 
 
-
+# *********** data processing ***********
 def preprocess_data(data_params):
 
     # *************** params ******************
@@ -70,6 +70,16 @@ def preprocess_data(data_params):
     return X_train, y_train, X_test, y_test, scaler
 
 
+def inverse_transforms(data, scaler):
+    """
+    invese transforms:
+        1. scaling
+        2. stationary
+    """
+    data_inverse = scaler.inverse_transform(data.reshape(-1, 1))
+
+
+# *********** model ***********
 def get_hyperparams()
     params = {
         'learning_rate' : 1e-3,
@@ -81,30 +91,40 @@ def get_hyperparams()
     }
     return params
 
-def main(args):
-    # ************** params **************
-    dataset_path = '../datasets/bitstampUSD_1-min_data_2012-01-01_to_2018-06-27.csv'
-    
-    time_now = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M")
-    exp_name = args.experiment_name + '_' + time_now
-    
-    logs_dir_path = '/tmp/tensorflow/{}/'.format(exp_name)
-    writer = tf.summary.FileWriter(logs_path)
-    
-    hyper_params = get_hyperparams()
-    data_params = dict()
-    data_params["dataset_path"] = dataset_path
-    data_params["look_back"] = hyper_params["look_back"]
-    data_params["train_set_fraction"] = hyper_params["train_set_fraction"]
 
-    train_params = {
-        'data_params' : data_params,
-        'batch_size' : hyper_params['batch_size']
+# TODO
+# what are the shapes of: x, init_state, outputs, outputs[:, -1, :]
+def model(x, init_state):
+    # x is of shape e.g. [16, 5]
+    # y, pred are of shape e.g. [16, 1]
+    n_hidden = model_params['n_hidden']   # 256 ?
+    learning_rate = model_params['learning_rate']
+    scaler = model_params['scaler']
+    num_layers = model_params['num_layers']
+
+    weights = {
+        'out': tf.Variable(tf.random_normal([n_hidden, prediction_num_features]))
+    }
+    biases = {
+        'out': tf.Variable(tf.random_normal([prediction_num_features]))
     }
     
-    # print("==> training")
-    train(train_params)
+    rnn_cell = tf.nn.rnn_cell.LSTMCell(n_hidden, state_is_tuple=True)
+    rnn_cell = tf.nn.rnn_cell.MultiRNNCell([cell] * num_layers, state_is_tuple=True)
+    if reset_state:
+        # what is the shape of init_state?
+        init_state = cell.zero_state(batch_size, tf.float32)
+    # make sure 'x' is of the right shape
+    outputs, current_state = tf.nn.dynamic_rnn(cell, x, initial_state=init_state)
+    tf.summary.histogram('rnn_outputs', outputs)
 
+    # what is the shape of outputs, outputs[:, -1, :] ?
+    prediction = tf.matmul(outputs[:, -1, :], weights['out']) + biases['out']
+
+    return prediction, current_state
+
+
+# ************* training *************
 def train(train_params):
     # ************** params **************
     
@@ -162,7 +182,7 @@ def train(train_params):
         y_test_inverse = y_test_inverse.squeeze()
         rmse = sqrt(mean_squared_error(prediction_inverse, y_inverse))
         tf.summary.scalar('rmse', rmse)
-        
+    
     merged_summary = tf.summary.merge_all()
     
     with tf.Session as sess:
@@ -198,36 +218,33 @@ def train(train_params):
                     })
                 val_writer.add_summary(_summary, i + num_validation_batches * epoch)
 
-# TODO
-# what are the shapes of: x, init_state, outputs, outputs[:, -1, :]
-def model(x, init_state):
-    # x is of shape e.g. [16, 5]
-    # y, pred are of shape e.g. [16, 1]
-    n_hidden = model_params['n_hidden']   # 256 ?
-    learning_rate = model_params['learning_rate']
-    scaler = model_params['scaler']
-    num_layers = model_params['num_layers']
 
-    weights = {
-        'out': tf.Variable(tf.random_normal([n_hidden, prediction_num_features]))
-    }
-    biases = {
-        'out': tf.Variable(tf.random_normal([prediction_num_features]))
+def main(args):
+    # ************** params **************
+    dataset_path = '../datasets/bitstampUSD_1-min_data_2012-01-01_to_2018-06-27.csv'
+    
+    time_now = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M")
+    exp_name = args.experiment_name + '_' + time_now
+    
+    logs_dir_path = '/tmp/tensorflow/{}/'.format(exp_name)
+    writer = tf.summary.FileWriter(logs_path)
+    
+    hyper_params = get_hyperparams()
+    data_params = dict()
+    data_params["dataset_path"] = dataset_path
+    data_params["look_back"] = hyper_params["look_back"]
+    data_params["train_set_fraction"] = hyper_params["train_set_fraction"]
+
+    train_params = {
+        'data_params' : data_params,
+        'batch_size' : hyper_params['batch_size']
     }
     
-    rnn_cell = tf.nn.rnn_cell.LSTMCell(n_hidden, state_is_tuple=True)
-    rnn_cell = tf.nn.rnn_cell.MultiRNNCell([cell] * num_layers, state_is_tuple=True)
-    if reset_state:
-        # what is the shape of init_state?
-        init_state = cell.zero_state(batch_size, tf.float32)
-    # make sure 'x' is of the right shape
-    outputs, current_state = tf.nn.dynamic_rnn(cell, x, initial_state=init_state)
-    tf.summary.histogram('rnn_outputs', outputs)
+    # print("==> training")
+    train(train_params)
 
-    # what is the shape of outputs, outputs[:, -1, :] ?
-    prediction = tf.matmul(outputs[:, -1, :], weights['out']) + biases['out']
 
-    return prediction, current_state
+
 
 # is input of e.g. size = 3 means that we input each sample into one cell
 # or that we input a vector of size 3 into one cell?
@@ -237,11 +254,4 @@ def model(x, init_state):
                                                      
                                             
 
-def inverse_transforms(data, scaler):
-    """
-    invese transforms:
-        1. scaling
-        2. stationary
-    """
-    data_inverse = scaler.inverse_transform(data.reshape(-1, 1))
 
