@@ -241,7 +241,7 @@ def main(args):
     fig = dict(data=data, layout=layout)
     py.plot(fig, filename='results_demonstrating')
 
-    rmse = sqrt(mean_squared_error(Y_test2_inverse, prediction2_inverse))
+    rmse = sqrt(mean_squared_error(Y_tes=t2_inverse, prediction2_inverse))
     print("rmse = {:.3f}".format(rmse))
   
 if __name__ == '__main__':
