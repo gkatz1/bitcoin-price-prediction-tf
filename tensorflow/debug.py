@@ -107,7 +107,7 @@ def get_hyperparams():
         'prediction_step' : 1,
         'train_set_fraction' : 0.75,
         'num_epochs' : 100,
-        'batch_size' : 1,
+        'batch_size' : 2,
         'n_hidden' : 256,
         'num_layers' : 3,
         'input_num_features' : 1,
@@ -153,8 +153,8 @@ def train(train_params):
     x = tf.placeholder(tf.float32, [None, look_back, input_num_features]) # 1 feature (price)
     y = tf.placeholder(tf.float32, [None, output_num_features])
 
-    state_0_c = tf.placeholder(tf.float32, [None, n_hidden])
-    state_0_h = tf.placeholder(tf.float32, [None, n_hidden])
+    init_state_0_c = tf.placeholder(tf.float32, [None, n_hidden])
+    init_state_0_h = tf.placeholder(tf.float32, [None, n_hidden])
 
     # **** model ****
     n_hidden = model_params['n_hidden']
@@ -172,9 +172,11 @@ def train(train_params):
 
     rnn_cell = tf.nn.rnn_cell.LSTMCell(n_hidden, state_is_tuple=True)
 
-    rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(state_0_c, state_0_h)
+    rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(init_state_0_c, init_state_0_h)
 
     outputs, current_state = tf.nn.dynamic_rnn(rnn_cell, x, initial_state=rnn_tuple_state)
+    cur_state_0_c = current_state.c
+    cur_state_0_h = current_state.h
     tf.summary.histogram('rnn_outputs', outputs)
 
     # what is the shape of outputs, outputs[:, -1, :] ?
@@ -182,27 +184,28 @@ def train(train_params):
 
 
     with tf.name_scope('Metrices'):
-        y = tf.reshape(y, [-1]) # necesary?
+        # y = tf.reshape(y, [-1]) # necesary?
         # regular version VS v2 VS sparse
         # what about the shape of prediction VS shape of y??
-        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=prediction, labels=y))
+        # loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=prediction, labels=y))
+        loss = tf.losses.mean_squared_error(labels=y, predictions=prediction)
         tf.summary.scalar('loss', loss)
         optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
 
         # in order to calculate rmse we need to transform data back to a price
-        prediction_inverse = inverse_transforms(prediction, scaler)
-        y_inverse = inverse_transforms(y, scaler)
-        prediction_inverse = prediction_inverse.squeeze()[1:]
-        y_test_inverse = y_test_inverse.squeeze()
-        rmse = sqrt(mean_squared_error(prediction_inverse, y_inverse))
-        tf.summary.scalar('rmse', rmse)
+        # prediction_inverse = inverse_transforms(prediction, scaler)
+        # y_inverse = inverse_transforms(y, scaler)
+        # prediction_inverse = prediction_inverse.squeeze()[1:]
+        # y_test_inverse = y_test_inverse.squeeze()
+        # rmse = sqrt(mean_squared_error(prediction_inverse, y_inverse))
+        # tf.summary.scalar('rmse', rmse)
 
     merged_summary = tf.summary.merge_all()
     saver = tf.train.Saver()
 
-    _state_0_c = np.zeros((batch_size, n_hidden), dtype=np.float32)
-    _state_0_h = np.zeros((batch_size, n_hidden), dtype=np.float32)
-    print(_state_0_c.shape)
+    _cur_state_0_c = np.zeros((batch_size, n_hidden), dtype=np.float32)
+    _cur_state_0_h = np.zeros((batch_size, n_hidden), dtype=np.float32)
+    print(_cur_state_0_c.shape)
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         # training
@@ -213,20 +216,25 @@ def train(train_params):
             for i, data in tqdm.tqdm(enumerate(train_loader, 0), total=num_training_batches):
                 if i == num_training_batches:
                     break
-                _x,_y = data
+                _x, _y = data
                 _x = _x.reshape((-1, look_back, input_num_features))
                 _y = _y.reshape((-1, output_num_features))
-                _state_0_c, _state_0_h, _pred = sess.run([state_0_c, state_0_h, prediction],
+                _loss, _, _summary, _cur_state_0_c, _cur_state_0_h= sess.run([
+                    loss, optimizer, merged_summary, cur_state_0_c, cur_state_0_h],
                     feed_dict = {
                         x: _x,
                         y: _y,
-                        state_0_h: _state_0_h,
-                        state_0_c: _state_0_c
+                        init_state_0_h: _cur_state_0_h,
+                        init_state_0_c: _cur_state_0_c
                     }
                 )
-                print(np.shape(_pred[0]))
-    raise NotImplementedError()
-
+                # print(_pred[0])
+                # print(np.shape(_pred))
+                # print(_outputs[0].shape)
+                train_writer.add_summary(_summary, i + num_training_batches * epoch)
+        train_writer.close()
+        saver.save(sess, model_save_path)
+        print("Run 'tensorboard --logdir=./{}' to checkout tensorboard logs.".format(logs_dir_path))
 
 def main(args):
     # ************** params **************
@@ -235,9 +243,9 @@ def main(args):
     time_now = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M")
     exp_name = args.experiment_name + '_' + time_now
     
-    logs_dir_path = '/tmp/tensorflow/{}/'.format(exp_name)
+    logs_dir_path = './runs/{}/'.format(exp_name)
     writer = tf.summary.FileWriter(logs_dir_path)
-    model_save_path = "models/{}.ckpt".format(exp_name)
+    model_save_path = "models/{}/{}.ckpt".format(args.experiment_name)
  
     hyper_params = get_hyperparams()
     data_params = dict()
