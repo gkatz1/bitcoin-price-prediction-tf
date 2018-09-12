@@ -170,10 +170,8 @@ def model(x, model_params, init_state): # , reset_state):
     ##     [tf.nn.rnn_cell.LSTMStateTuple(state_per_layer_list[idx][0], state_per_layer_list[idx][1])
     ##      for idx in range(num_layers)]
     ## )
-
-    rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(init_state[0], init_state[1])
-    ### state_0_c, state_0_h = init_state
-    ### rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(state_0_c, state_0_h)
+    state_0_c, state_0_h = init_state
+    rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(state_0_c, state_0_h)
    
     ## init_state = rnn_cell.zero_state(batch_size, tf.float32)   # debugging
     ## rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(init_state[0], init_state[1])
@@ -181,14 +179,13 @@ def model(x, model_params, init_state): # , reset_state):
     # make sure 'x' is of the right shape
     ## outputs, current_state = tf.nn.dynamic_rnn(rnn_cell, x, initial_state=init_state)
     outputs, current_state = tf.nn.dynamic_rnn(rnn_cell, x, initial_state=rnn_tuple_state)
-    current_state = tf.stack([current_state.c, current_state.h])
     tf.summary.histogram('rnn_outputs', outputs)
 
     # what is the shape of outputs, outputs[:, -1, :] ?
     prediction = tf.matmul(outputs[:, -1, :], weights['out']) + biases['out']
 
     # return prediction, current_state
-    return prediction, current_state # , outputs # , init_state   # debug
+    return prediction, current_state #, outputs # , init_state   # debug
 
 
 # ************* training *************
@@ -245,25 +242,19 @@ def train(train_params):
     # WHAT IS THE SHAPE OF init_state ?
 
     ## current_state = tf.placeholder(tf.float32, [model_params['num_layers'], 2, batch_size, n_hidden])
-    current_state = tf.placeholder(tf.float32, [2, batch_size, n_hidden])
-
-    
-    ### state_0_h = tf.placeholder(tf.float32, [None, n_hidden])
-    ### state_0_c = tf.placeholder(tf.float32, [None, n_hidden]) 
-
+    ## current_state = tf.placeholder(tf.float32, [2, batch_size, n_hidden])
+    state_0_h = tf.placeholder(tf.float32, [None, n_hidden])
+    state_0_c = tf.placeholder(tf.float32, [None, n_hidden]) 
     # current_state = []
     # reset_state = tf.placeholder(tf.int32, shape=[])
     
-    prediction, current_state = model(x, model_params, current_state)
+    ### prediction, current_state = model(x, model_params, current_state, reset_state)
 
     # prediction, current_state= model(x, model_params, [], reset_state)
     # if debug:
-    ## prediction, current_state = model(x, model_params, (state_0_c, state_0_h))  # debug
-
-    ### prediction, current_state = model(x, model_params, (state_0_c, state_0_h))  # debug
-    ### state_0_c = current_state.c
-    ### state_0_h = current_state.h
-
+    prediction, current_state = model(x, model_params, (state_0_c, state_0_h))  # debug
+    state_0_c = current_state.c
+    state_0_h = current_state.h
     # else:
     #     prediction, current_state = model(x, model_params, current_state)  # debug
 
@@ -276,12 +267,14 @@ def train(train_params):
 
     # *** debugging ***
     if debug:
+        _state_0_c = np.zeros((batch_size, n_hidden), dtype=np.float32)
+        _state_0_h = np.zeros((batch_size, n_hidden), dtype=np.float32)
+        print(_state_0_c.shape)
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
             # training
             print("==> debugging")
             for epoch in tqdm.tqdm(range(num_epcohs)):
-                _current_state = np.zeros((2, batch_size, n_hidden))
                 # _current_state = np.zeros((model_params['num_layers'], 2, batch_size, n_hidden))
                 # _current_state = tuple([tuple((el[0], el[1])) for el in _current_state])
                 # print(len(_current_state))
@@ -293,13 +286,19 @@ def train(train_params):
                     _x,_y = data
                     _x = _x.reshape((-1, look_back, input_num_features))
                     _y = _y.reshape((-1, output_num_features))
-                    _current_state = sess.run([current_state],
-                        feed_dict = {x: _x, y: _y, current_state: _current_state})
+                    _state_0_c, _state_0_h, _pred = sess.run([state_0_c, state_0_h, prediction],
+                        feed_dict = {
+                            x: _x, 
+                            y: _y,
+                            state_0_h: _state_0_h,
+                            state_0_c: _state_0_c
+                        }
+                    )
                     # current_state: _current_state})
                     # print(_current_state)
-                    print(np.shape(_current_state[0]))
+                    # print(np.shape(_current_state[0]))
                     # print(np.shape(_outputs[0]))
-                    # print(np.shape(_prediction[0]))
+                    print(np.shape(_pred[0]))
                     # print(tf.shape(_init_state_debug))
                     # raise NotImplementedError()
                     # print(_prediction, tf.shape(_prediction[0]))
@@ -332,21 +331,29 @@ def train(train_params):
         print("==> training")
         for epoch in tqdm.tqdm(range(num_epcohs)):
             # initialize every epoch?
-            _current_state = np.zeros((model_params['num_layers'], 2, batch_size, n_hidden))
-            _current_state = tuple([tuple((el[0], el[1])) for el in _current_state])
-
+            # _current_state = np.zeros((model_params['num_layers'], 2, batch_size, n_hidden))
+            # _current_state = tuple([tuple((el[0], el[1])) for el in _current_state])
+            _state_0_c = np.zeros((batch_size, n_hidden), dtype=np.float32)
+            _state_0_h = np.zeros((batch_size, n_hidden), dtype=np.float32)
+            i = 0
             train_rmse = 0.0
             for i, data in tqdm.tqdm(enumerate(train_loader, 0), total=num_training_batches):
-                _x,_y = data
+                if i == num_training_batches:
+                    break
+                    _state_0_c, _state_0_h = sess.run([state_0_c, state_0_h],
+                        feed_dict = {x: _x, y: _y, state_0_h: _state_0_h.astype(np.float32), state_0_c: _state_0_c.astype(np.float32)})
+                _x, _y = data
                 _x = _x.reshape((-1, look_back, input_num_features))  # necesary ?
                 _y = _y.reshape((-1, output_num_features))  # necesary ?
                 _loss, _rmse, _, _summary, _current_state = sess.run([loss, rmse, optimizer,
-                    merged_summary, current_state],
+                    merged_summary, state_0_c, state_0_h],
                 # _init_state = sess.run([init_state_debug],
                     feed_dict = {
                     x: _x,
                     y: _y,
-                    current_state: _current_state,
+                    state_0_c: _current_state[0],
+                    state_0_h: _current_state[1]
+                    ##current_state: _current_state,
                     ## reset_state: 1 if i == 0 else 0
                     ## reset_state: 1
                     })

@@ -19,6 +19,7 @@ def batch_generator(X, y, batch_size):
             i = 0
 
 
+
 if __name__ == "__main__":
     # Test batch generator
     gen = batch_generator(np.array([['a', 'e'], ['b', 'f'],
