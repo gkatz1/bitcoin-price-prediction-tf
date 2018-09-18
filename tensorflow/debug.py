@@ -10,6 +10,9 @@ import numpy as np
 import tensorflow as tf
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_squared_error
+from math import sqrt
+from matplotlib import pyplot as plt
 
 from utils.batch_generator import batch_generator
 
@@ -25,12 +28,34 @@ def to_supervised(data, look_back=1, num_features=1):
     creates inputs, labels
     returns X, Y
     """
+    # print("in to_supervised")
+    # print(data)
+    # print(data.shape)
+
     X, Y = [], []
     for i in range(len(data) - look_back):
-        X.append(data[i:(i + look_back), 0].reshape(look_back, num_features[0]))
-        Y.append(data[i + look_back, 0].reshape(1, num_features[1]))  # predicting next single value
+        # X.append(data[i:(i + look_back)].reshape(look_back, num_features[0]))
+        X.append(data[i:(i + look_back)])
+        # Y.append(data[i + look_back].reshape(1, num_features[1]))  # predicting next single value
+        Y.append(data[i + look_back])   # predicting next single value
     X, Y = np.array(X), np.array(Y)
     return X, Y
+
+
+def difference(data, interval=1):
+    diff = list()
+    for i in range(interval, len(data)):
+        value = data[i] - data[i - interval]
+        diff.append(value)
+    return np.array(diff)
+
+
+# invert differenced value
+def inverse_difference(history, yhat, interval=1):
+    print("inverse_difference")
+    print("history.shape ={}".format(history.shape))
+    print("yhat.shape ={}".format(yhat.shape))
+    return yhat + history[-interval]
 
 def preprocess_data(data_params):
 
@@ -53,40 +78,47 @@ def preprocess_data(data_params):
     print(str(len(daily_price.index)))
     print(daily_price.index[0])
 
-    num_samples = len(daily_price.index)
-    train_delta = train_set_fraction * num_samples
-    # train_delta = 600  # debug
-    # test_delta = 60  # debug
+    num_samples = len(daily_price.index) 
 
-    train_d_start = daily_price.index[0]
-    train_d_end = train_d_start + timedelta(days=train_delta)
-    test_d_start = train_d_end
-    # test_d_end = train_d_end + timedelta(days=test_delta)  # debug
-    print(train_d_start, train_d_end, test_d_start)
+    train_start_idx = 0
+    train_end_idx = int(train_set_fraction * num_samples)
+    data_params['training_set_size'] = train_end_idx - train_start_idx
+    data_params['validation_set_size'] = num_samples - data_params['training_set_size']
 
-    train_data = daily_price[train_d_start:train_d_end]
-    # test_data = daily_price[train_d_end:test_d_end]   # debu
-    test_data = daily_price[train_d_end:]
-    print("train_data, test_data")
-    print(len(train_data), len(test_data))
-    # print(train_data, test_data)
+    # new logic
+    raw_values = daily_price.values
+    train_set = raw_values[train_start_idx:train_end_idx]
 
-    train_set = train_data.values
-    train_set = np.reshape(train_set, (len(train_set), 1))
-    test_set = test_data.values
-    test_set = np.reshape(test_set, (len(test_set), 1))
+    daily_price_x, daily_price_y = to_supervised(raw_values, look_back, num_features)
+    print(daily_price_y.shape)
+    daily_price_x = difference(daily_price_x, look_back)   # leaving daily_price_y raw
+    train_x = daily_price_x[train_start_idx:train_end_idx]
+    train_y = daily_price_y[train_start_idx:train_end_idx]
+    train_Y = difference(train_y, look_back)   
+    test_x = daily_price_x[train_end_idx:]
+    test_y = daily_price_y[train_end_idx:]
 
-    scaler = MinMaxScaler() # feature_range=(-1,1)
-    train_set = scaler.fit_transform(train_set) # scaler.fit() ?
-    test_set = scaler.transform(test_set)
+    print(train_x.shape, test_x.shape)
+ 
+    scaler = MinMaxScaler(feature_range=(-1,1)) # feature_range=(-1,1)
+    print(train_x.shape, train_y.shape)
+    train_set = np.reshape(train_set, (max(train_set.shape), 1))
+    train_set_scaled = scaler.fit_transform(train_set) # scaler.fit()
+    train_x = np.reshape(train_x, (max(train_x.shape), 1)) 
+    train_x = scaler.transform(train_x)   # don't want to scale test data's labels
+    train_y = np.reshape(train_y, (max(train_y.shape), 1)) 
+    train_y = scaler.transform(train_y)   # scale train's labels, required for loss calculations
+    test_x = np.reshape(test_x, (max(test_x.shape), 1)) 
+    test_x = scaler.transform(test_x)   # don't want to scale test data's labels
     
-    X_train, y_train = to_supervised(train_set, look_back, num_features)
-    X_test, y_test = to_supervised(test_set, look_back, num_features)
-    
-    # X_train = np.reshape(X_train, (len(X_train), 1, X_train.shape[1]))
-    # X_test = np.reshape(X_test, (len(X_test), 1, X_test.shape[1]))
-    
-    return X_train, y_train, X_test, y_test, scaler
+
+    train_x = train_x.reshape([max(train_x.shape), look_back, num_features[0]])
+    test_x = test_x.reshape([max(test_x.shape), look_back, num_features[0]])
+    train_y = train_y.reshape([max(train_y.shape), look_back, num_features[1]])
+    test_y = test_y.reshape([max(test_y.shape), look_back, num_features[1]])
+        
+ 
+    return raw_values, train_x, train_y, test_x, test_y, scaler
 
 
 def inverse_transforms(data, scaler):
@@ -95,9 +127,15 @@ def inverse_transforms(data, scaler):
         1. scaling
         2. stationary
     """
-    data = tf.reshape(data, [-1, 1])
-    data_inverse = scaler.inverse_transform(data)
+    # print("inverse_transforms(), data")
+    # print(data)
 
+    data = data.reshape(-1, 1)
+    ## data = tf.reshape(data, [-1, 1])
+    # data = tf.reshape(data, [-1])
+    # data = tf.squeeze(data, axis=0)
+    data_inverse = scaler.inverse_transform(data)
+    return data_inverse
 
 # *********** model ***********
 def get_hyperparams():
@@ -106,8 +144,8 @@ def get_hyperparams():
         'look_back' : 1,
         'prediction_step' : 1,
         'train_set_fraction' : 0.75,
-        'num_epochs' : 100,
-        'batch_size' : 2,
+        'num_epochs' : 50,
+        'batch_size' : 1,
         'n_hidden' : 256,
         'num_layers' : 3,
         'input_num_features' : 1,
@@ -133,7 +171,9 @@ def train(train_params):
     learning_rate = model_params['learning_rate']
     val_batch_size = batch_size
 
-    X_train, y_train, X_validation, y_validation, scaler = preprocess_data(data_params)
+    raw_values, X_train, y_train, X_validation, y_validation, scaler = preprocess_data(data_params)
+    print(raw_values.shape, X_train.shape, y_train.shape, X_validation.shape, y_validation.shape)
+ 
     # print(X_train[0])
     # print(X_train[0].shape)
     # print(X_train[0:2].shape)
@@ -179,7 +219,6 @@ def train(train_params):
     cur_state_0_h = current_state.h
     tf.summary.histogram('rnn_outputs', outputs)
 
-    # what is the shape of outputs, outputs[:, -1, :] ?
     prediction = tf.matmul(outputs[:, -1, :], weights['out']) + biases['out']
 
 
@@ -188,17 +227,17 @@ def train(train_params):
         # regular version VS v2 VS sparse
         # what about the shape of prediction VS shape of y??
         # loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=prediction, labels=y))
-        loss = tf.losses.mean_squared_error(labels=y, predictions=prediction)
+        loss = tf.losses.mean_squared_error(labels=y, predictions=prediction)  # is the loss calculated correctly? are these the params I need to pass?
         tf.summary.scalar('loss', loss)
         optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
 
         # in order to calculate rmse we need to transform data back to a price
-        # prediction_inverse = inverse_transforms(prediction, scaler)
-        # y_inverse = inverse_transforms(y, scaler)
-        # prediction_inverse = prediction_inverse.squeeze()[1:]
-        # y_test_inverse = y_test_inverse.squeeze()
-        # rmse = sqrt(mean_squared_error(prediction_inverse, y_inverse))
-        # tf.summary.scalar('rmse', rmse)
+        ## prediction_inverse = inverse_transforms(prediction, scaler)
+        ## y_inverse = inverse_transforms(y, scaler)
+        ## prediction_inverse = prediction_inverse.squeeze()[1:]
+        ## y_test_inverse = y_test_inverse.squeeze()
+        ## rmse = sqrt(mean_squared_error(prediction_inverse, y_inverse))
+        ## tf.summary.scalar('rmse', rmse)
 
     merged_summary = tf.summary.merge_all()
     saver = tf.train.Saver()
@@ -206,21 +245,24 @@ def train(train_params):
     _cur_state_0_c = np.zeros((batch_size, n_hidden), dtype=np.float32)
     _cur_state_0_h = np.zeros((batch_size, n_hidden), dtype=np.float32)
     print(_cur_state_0_c.shape)
+    print("Run 'tensorboard --logdir=./{}' to checkout tensorboard logs.".format(logs_dir_path))
+    print("==> training")
+
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         # training
-        print("==> debugging")
         for epoch in tqdm.tqdm(range(num_epcohs)):
-            i = 0
             train_rmse = 0.0
             for i, data in tqdm.tqdm(enumerate(train_loader, 0), total=num_training_batches):
+                print(i)
                 if i == num_training_batches:
+                    print("*" * 50)
                     break
                 _x, _y = data
                 _x = _x.reshape((-1, look_back, input_num_features))
                 _y = _y.reshape((-1, output_num_features))
-                _loss, _, _summary, _cur_state_0_c, _cur_state_0_h= sess.run([
-                    loss, optimizer, merged_summary, cur_state_0_c, cur_state_0_h],
+                _pred, _loss, _, _summary, _cur_state_0_c, _cur_state_0_h = sess.run([
+                    prediction, loss, optimizer, merged_summary, cur_state_0_c, cur_state_0_h],
                     feed_dict = {
                         x: _x,
                         y: _y,
@@ -228,13 +270,92 @@ def train(train_params):
                         init_state_0_c: _cur_state_0_c
                     }
                 )
-                # print(_pred[0])
-                # print(np.shape(_pred))
-                # print(_outputs[0].shape)
+                # print(_rmse)
+                print(_pred.shape)
+                print(type(_pred))
+                print(_pred)
+
+                prediction_inverse = inverse_transforms(_pred, scaler)
+                y_inverse = inverse_transforms(_y, scaler)
+                # print("prediction_inverse")
+                # print(prediction_inverse)
+                # print("squeezed")
+                # print(prediction_inverse.squeeze(axis=0))
+                prediction_inverse = prediction_inverse.squeeze(axis=0)
+                y_inverse = y_inverse.squeeze(axis=0)
+                print("inversed")
+                print(prediction_inverse)
+                print(y_inverse)
+                rmse = sqrt(mean_squared_error(prediction_inverse, y_inverse))
+                print("rmse: {}".format(rmse))
+
+                ## # rmse_writer = tf.Summary()
+                ## tf.summary.scalar('rmse', rmse)
+                ## # rmse_writer.scalar('rmse', rmse)
+                ## rmse_writer = tf.summary.merge_all()
+                ## train_writer.add_summary(rmse_writer, i + num_training_batches * epoch)
+
                 train_writer.add_summary(_summary, i + num_training_batches * epoch)
         train_writer.close()
         saver.save(sess, model_save_path)
-        print("Run 'tensorboard --logdir=./{}' to checkout tensorboard logs.".format(logs_dir_path))
+
+        validation_set_size = data_params['validation_set_size']
+        train_set_size = data_params['training_set_size']
+        predictions = list()
+        ground_truths = list()
+
+        print("==> validating")
+        # print(num_validation_batches)
+        for epoch in tqdm.tqdm(range(1)):
+            total_rmse = 0.0
+            for i, data in tqdm.tqdm(enumerate(val_loader, 0), total=num_validation_batches):
+                if i == 0:
+                    history = [] 
+                if i == num_validation_batches:
+                    break
+                _x, _y = data
+                _x = _x.reshape((-1, look_back, input_num_features))
+                _y = _y.reshape((-1, output_num_features))
+                _pred, _summary, _cur_state_0_c, _cur_state_0_h = sess.run([
+                    prediction, merged_summary, cur_state_0_c, cur_state_0_h],
+                    feed_dict = {
+                        x: _x,
+                        y: _y,
+                        init_state_0_h: _cur_state_0_h,
+                        init_state_0_c: _cur_state_0_c
+                    }
+                )
+
+                print(_pred.shape)
+                print(type(_pred))
+                print(_pred)
+                # _pred = np.squeeze(_pred, axis=0)
+                # print(_pred, _pred.shape)
+                prediction_inverse = inverse_transforms(_pred, scaler)
+                prediction_inverse = prediction_inverse.squeeze(axis=0)
+                prediction_inverse = inverse_difference(raw_values, prediction_inverse, \
+                    validation_set_size + 1 - i)
+                predictions.append(prediction_inverse[0])
+                ground_truths.append(raw_values[train_set_size + i + 1])    # why +1 ?
+                rmse = sqrt(mean_squared_error(prediction_inverse, _y))
+                print("predicted = {}, groud truth = {}".format(prediction_inverse, \
+                    raw_values[train_set_size + i + 1]))
+
+                print("rmse: {}".format(rmse))
+                print("\n")
+                total_rmse += rmse
+
+        val_writer.close()
+
+        total_rmse /= num_validation_batches
+        rmse_2 = sqrt(mean_squared_error(ground_truths, predictions))
+
+        print("validation rmse: {}".format(total_rmse))
+        print("validation rmse 2: {}".format(rmse_2))
+        plt.plot(ground_truths, 'r')
+        plt.plot(predictions, 'b')
+        plt.show()
+
 
 def main(args):
     # ************** params **************
@@ -245,7 +366,7 @@ def main(args):
     
     logs_dir_path = './runs/{}/'.format(exp_name)
     writer = tf.summary.FileWriter(logs_dir_path)
-    model_save_path = "models/{}/{}.ckpt".format(args.experiment_name)
+    model_save_path = "models/{0}/{0}.ckpt".format(args.experiment_name)
  
     hyper_params = get_hyperparams()
     data_params = dict()
