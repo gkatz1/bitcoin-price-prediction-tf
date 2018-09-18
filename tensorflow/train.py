@@ -211,6 +211,8 @@ def train(train_params):
     val_batch_size = batch_size
  
     X_train, y_train, X_validation, y_validation, scaler = preprocess_data(data_params)
+    print(X_train.shape, y_train.shape, X_validation.shape, y_validation.shape)
+    raise NotImplementedError()
     # print(X_train[0])
     # print(X_train[0].shape)
     # print(X_train[0:2].shape)
