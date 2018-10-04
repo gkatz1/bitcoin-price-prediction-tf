@@ -227,7 +227,7 @@ def train(train_params):
     cur_state_0_attention_0 = current_state[1]
     cur_state_0_attention_1 = current_state[2]
    
-    tf.summary.histogram('rnn_outputs', outputs)
+    # tf.summary.histogram('rnn_outputs', outputs)
 
     prediction = tf.matmul(outputs[:, -1, :], weights['out']) + biases['out']
 

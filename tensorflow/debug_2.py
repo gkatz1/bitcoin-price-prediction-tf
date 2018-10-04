@@ -6,6 +6,7 @@ import time
 import datetime
 from datetime import timedelta
 from datetime import date
+import datetime as dt
 import numpy as np
 import tensorflow as tf
 import pandas as pd
@@ -57,6 +58,11 @@ def inverse_difference(history, yhat, interval=1):
     print("yhat.shape ={}".format(yhat.shape))
     return yhat + history[-interval]
 
+
+def timestamp_parser(x):
+    return pd.to_datetime(x, unit='s')
+
+
 def preprocess_data(data_params):
 
     # *************** params ******************
@@ -65,38 +71,42 @@ def preprocess_data(data_params):
     dataset_path = data_params["dataset_path"]
     num_features = data_params['input_num_features'], data_params['output_num_features']
 
-    data = pd.read_csv(dataset_path)
-    # print(data.isnull().values.any())
-    # print(data.head(10))
 
-    data['date'] = pd.to_datetime(data['Timestamp'],unit='s').dt.date
-    group = data.groupby('date')
-    daily_price = group['Weighted_Price'].mean()
+    b_data = pd.read_csv(dataset_path, usecols=['Timestamp', 'Close'], 
+        squeeze=True, index_col=0, parse_dates=[0], date_parser=timestamp_parser)
 
-    print(daily_price.head())
-    # print(daily_price.tail())
-    print(str(len(daily_price.index)))
-    print(daily_price.index[0])
 
-    num_samples = len(daily_price.index)
+    start = b_data.index.searchsorted(dt.datetime(2018, 1, 2))
+    end = b_data.index.searchsorted(dt.datetime(2018, 1, 3))
+    b_data = b_data[start:end]
+    
+    num_samples = len(b_data.index)
+    raw_values = b_data.values
 
+    print(b_data.head())
+    print(num_samples)
+    print(raw_values)
+    print(type(raw_values))
+    
     train_start_idx = 0
     train_end_idx = int(train_set_fraction * num_samples)
     data_params['training_set_size'] = train_end_idx - train_start_idx
     data_params['validation_set_size'] = num_samples - data_params['training_set_size']
+  
 
-    # new logic
-    raw_values = daily_price.values
+    # old logic
+
     train_set = raw_values[train_start_idx:train_end_idx]
 
-    daily_price_x, daily_price_y = to_supervised(raw_values, look_back, num_features)
-    print(daily_price_y.shape)
-    daily_price_x = difference(daily_price_x, look_back)   # leaving daily_price_y raw
-    train_x = daily_price_x[train_start_idx:train_end_idx]
-    train_y = daily_price_y[train_start_idx:train_end_idx]
+    x_values, y_values = to_supervised(raw_values, look_back, num_features)
+    print(y_values.shape)
+    x_values = difference(x_values, look_back)   
+    train_x = x_values[train_start_idx:train_end_idx]
+    train_y = y_values[train_start_idx:train_end_idx]
     train_Y = difference(train_y, look_back)
-    test_x = daily_price_x[train_end_idx:]
-    test_y = daily_price_y[train_end_idx:]
+    test_x = x_values[train_end_idx:]
+    test_y = y_values[train_end_idx:]
+    # raw_gt_values = raw_values[train_end_idx + 1:]   # groud truth values for predictions
 
     print(train_x.shape, test_x.shape)
  
@@ -110,14 +120,34 @@ def preprocess_data(data_params):
     train_y = scaler.transform(train_y)   # scale train's labels, required for loss calculations
     test_x = np.reshape(test_x, (max(test_x.shape), 1))
     test_x = scaler.transform(test_x)   # don't want to scale test data's labels
-    
+   
+    print(train_x.shape, test_x.shape, train_y.shape, test_y.shape)
+    raise NotImplementedError()    
 
     train_x = train_x.reshape([max(train_x.shape), look_back, num_features[0]])
     test_x = test_x.reshape([max(test_x.shape), look_back, num_features[0]])
     train_y = train_y.reshape([max(train_y.shape), look_back, num_features[1]])
-    test_y = test_y.reshape([max(test_y.shape), look_back, num_features[1]])
+    # test_y = test_y.reshape([max(test_y.shape), look_back, num_features[1]])
+    print("\n\n~~~~~~~~~~~~~~~~~")
+    print(test_y)
+    print(test_y.shape)
+    print("\n\n~~~~~~~~~~~~~~~~~")
+    print(raw_values[train_end_idx + 1:])
+    print(raw_values[train_end_idx + 1:].shape)
+    print("\n\n~~~~~~~~~~~~~~~~~")
+    print("test_x.shape = {}".format(test_x.shape))
+
+    print("\n\n~~~~~~~~~~~~~~~~~")
+    print("raw values")
+    print(raw_values)
+    print("\n\n~~~~~~~~~~~~~~~~~")
+    print("train_x")
+    print(train_x)
+    print("\n\n~~~~~~~~~~~~~~~~~")
+    print("test_x")
+    print(test_x) 
+    raise NotImplementedError()
     
- 
     return raw_values, train_x, train_y, test_x, test_y, scaler
 
 
@@ -144,7 +174,7 @@ def get_hyperparams():
         'look_back' : 1,
         'prediction_step' : 1,
         'train_set_fraction' : 0.75,
-        'num_epochs' : 15,
+        'num_epochs' : 1,
         'batch_size' : 1,
         'n_hidden' : 256,
         'attn_len' : 16,
@@ -216,14 +246,12 @@ def train(train_params):
     }
 
     rnn_cell = tf.nn.rnn_cell.LSTMCell(n_hidden, state_is_tuple=True)
-    rnn_cell = tf.contrib.rnn.AttentionCellWrapper(rnn_cell, attn_length=attn_len)
 
     rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(init_state_0_c, init_state_0_h)
-    rnn_tuple_state = tuple((rnn_tuple_state, init_state_0_attention_0, init_state_0_attention_1))
 
     outputs, current_state = tf.nn.dynamic_rnn(rnn_cell, x, initial_state=rnn_tuple_state)
-    cur_state_0_c = current_state[0].c
-    cur_state_0_h = current_state[0].h
+    cur_state_0_c = current_state.c
+    cur_state_0_h = current_state.h
 
     tf.summary.histogram('rnn_outputs', outputs)
 
@@ -276,8 +304,8 @@ def train(train_params):
                     feed_dict = {
                         x: _x,
                         y: _y,
-                        init_state_0_c: _current_state[0][0],
-                        init_state_0_h: _current_state[0][1]
+                        init_state_0_c: _current_state[0],
+                        init_state_0_h: _current_state[1]
                     }
                 )
 
@@ -340,8 +368,8 @@ def train(train_params):
                     feed_dict = {
                         x: _x,
                         y: _y,
-                        init_state_0_c: _current_state[0][0],
-                        init_state_0_h: _current_state[0][1],
+                        init_state_0_c: _current_state[0],
+                        init_state_0_h: _current_state[1]
                     }
                 )
 
@@ -367,7 +395,12 @@ def train(train_params):
         val_writer.close()
 
         total_rmse /= num_validation_batches
-        rmse_2 = sqrt(mean_squared_error(ground_truths, predictions))
+        # rmse_2 = sqrt(mean_squared_error(ground_truths, predictions))
+        predictions = np.array(predictions)
+        print("predictions.shape = {}, y_validation.shape = {}".format(
+            predictions.shape, y_validation.shape))
+        raise NotImplementedError()
+        rmse_2 = sqrt(mean_squared_error(y_validation, predictions))
 
         print("validation rmse: {}".format(total_rmse))
         print("validation rmse 2: {}".format(rmse_2))
