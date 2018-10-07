@@ -77,6 +77,7 @@ def preprocess_data(data_params):
     # *************** params ******************
     look_back = data_params['look_back']
     train_set_fraction = data_params['train_set_fraction'] # 0.75
+    test_set_fraction = 1 - train_set_fraction
     dataset_path = data_params["dataset_path"]
     num_features = data_params['input_num_features'], data_params['output_num_features']
 
@@ -85,22 +86,26 @@ def preprocess_data(data_params):
         squeeze=True, index_col=0, parse_dates=[0], date_parser=timestamp_parser)
 
 
+    # start = b_data.index.searchsorted(dt.datetime(2018, 1, 2))
+    # end = b_data.index.searchsorted(dt.datetime(2018, 1, 6))
     start = b_data.index.searchsorted(dt.datetime(2018, 1, 2))
-    end = b_data.index.searchsorted(dt.datetime(2018, 1, 3))
+    end = b_data.index.searchsorted(dt.datetime(2018, 1, 4))
     b_data = b_data[start:end]
-    
     num_samples = len(b_data.index)
     raw_values = b_data.values
 
+    print(raw_values)
+    print("min = {}, max = {}, num samples = {}".format(
+        min(raw_values), max(raw_values), num_samples))
+    # raise NotImplementedError()
+ 
     print(b_data.head())
     print(num_samples)
     print(raw_values)
     print(type(raw_values))
     
-    train_start_idx = 0
-    train_end_idx = int(train_set_fraction * num_samples)
-    data_params['training_set_size'] = train_end_idx - train_start_idx
-    data_params['validation_set_size'] = num_samples - data_params['training_set_size']
+    # train_start_idx = 0
+    # train_end_idx = int(train_set_fraction * num_samples)
   
     # new logic
 
@@ -108,12 +113,20 @@ def preprocess_data(data_params):
     supervised = to_supervised(diff_vals, look_back)
 
     supervised_vals = supervised.values
-    train = supervised_vals[train_start_idx:train_end_idx] 
-    test = supervised_vals[train_end_idx:]
+    train = supervised_vals[0:-int(num_samples * test_set_fraction)] 
+    test = supervised_vals[-int(num_samples * test_set_fraction):]
     scaler, train_scaled, test_scaled = scale(train, test)
 
+    data_params['training_set_size'] = max(train.shape)
+    data_params['validation_set_size'] = max(test.shape)
+    print("training set size = {}, validation set size = {}".format(
+        max(train.shape), max(test.shape)))
+
     train_x, train_y = train[:, 0:-1], train[:, -1]
-    test_x, test_y = test[:, 0:-1], raw_values[train_end_idx:]
+    test_x = test[:, 0:-1]
+    test_y = raw_values[-int(num_samples * test_set_fraction):]
+    print("test_x.shape = {}, test_y.shape = {}".format(
+        test_x.shape, test_y.shape))
     
     print(train_x.shape, train_y.shape, test_x.shape, test_y.shape)
     print(train_x)
@@ -153,7 +166,7 @@ def get_hyperparams():
         'train_set_fraction' : 0.75,
         'num_epochs' : 100,
         'batch_size' : 1,
-        'n_hidden' : 16,
+        'n_hidden' : 256,
         'num_layers' : 3,
         'input_num_features' : 1,
         'output_num_features' : 1
@@ -225,8 +238,8 @@ def train(train_params):
     rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(init_state_0_c, init_state_0_h)
 
     outputs, current_state = tf.nn.dynamic_rnn(rnn_cell, x, initial_state=rnn_tuple_state)
-    cur_state_0_c = current_state.c
-    cur_state_0_h = current_state.h
+    # cur_state_0_c = current_state.c
+    # cur_state_0_h = current_state.h
 
     tf.summary.histogram('rnn_outputs', outputs)
 
@@ -267,7 +280,7 @@ def train(train_params):
         for epoch in tqdm.tqdm(range(num_epochs)):
             train_rmse = 0.0
             for i, data in tqdm.tqdm(enumerate(train_loader, 0), total=num_training_batches):
-                print(i)
+                # print(i)
                 if i == num_training_batches:
                     print("*" * 50)
                     break
@@ -345,7 +358,7 @@ def train(train_params):
         predictions = np.array(predictions)
         print("predictions.shape = {}, y_validation.shape = {}".format(
             predictions.shape, y_validation.shape))
-        rmse_2 = sqrt(mean_squared_error(y_validation[1:], predictions))
+        rmse_2 = sqrt(mean_squared_error(y_validation, predictions))
 
         # print("validation rmse: {}".format(total_rmse))
         print("validation rmse 2: {}".format(rmse_2))
