@@ -23,6 +23,21 @@ tf.reset_default_graph()
 # TODO:
 # run training on gpu
 
+
+# *********** helper functions ***********
+def cmp_tuples(tup1, tup2):
+    """"compares 2 tuples
+    returns True if equal
+    compatible for the _current_state tuple structure only    
+    """
+    return False   # debugging
+
+    print(tup2)
+    for (sub_tup1, sub_tup2) in zip(tup1, tup2):
+        if sorted(sub_tup1) != sorted(sub_tup2):
+            return False
+    return True
+
 # *********** data processing ***********
 def to_supervised(data, look_back=1):
     df = pd.DataFrame(data)
@@ -43,9 +58,9 @@ def difference(data, interval=1):
 
 # invert differenced value
 def inverse_difference(history, yhat, interval=1):
-    print("inverse_difference")
-    print("history.shape ={}".format(history.shape))
-    print("yhat.shape ={}".format(yhat.shape))
+    # print("inverse_difference")
+    # print("history.shape ={}".format(history.shape))
+    # print("yhat.shape ={}".format(yhat.shape))
     return yhat + history[-interval]
 
 # scale
@@ -284,6 +299,12 @@ def train(train_params):
     _cur_state_0_h = np.zeros((batch_size, n_hidden), dtype=np.float32)
     _current_state = tuple((_cur_state_0_c, _cur_state_0_h))
 
+    validation_set_size = data_params['validation_set_size']
+    train_set_size = data_params['training_set_size']
+
+    best_model_rmse = float("inf")
+    prev_current_state = None
+
     ## print(_cur_state_0_c.shape)
     print("Run 'tensorboard --logdir=./{}' to checkout tensorboard logs.".format(logs_dir_path))
     print("==> training")
@@ -292,7 +313,11 @@ def train(train_params):
         sess.run(tf.global_variables_initializer())
         # training
         for epoch in tqdm.tqdm(range(num_epochs)):
-            train_rmse = 0.0
+            predictions = list()
+            ground_truths = list()
+            # print("_current_state before training:") 
+            # print(_current_state)
+            # print("before == previous after? {}".format(cmp_tuples(_current_state, prev_current_state)))
             for i, data in tqdm.tqdm(enumerate(train_loader, 0), total=num_training_batches):
                 # print(i)
                 if i == num_training_batches:
@@ -311,21 +336,19 @@ def train(train_params):
                     }
                 )
 
-
+                
                 train_writer.add_summary(_summary, i + num_training_batches * epoch)
 
-        train_writer.close()
-        saver.save(sess, model_save_path)
+            # print("_current_state after training:") 
+            # print(_current_state)
+            # _prev_current_state = _current_state
 
-        validation_set_size = data_params['validation_set_size']
-        train_set_size = data_params['training_set_size']
-        predictions = list()
-        ground_truths = list()
-
-        print("==> validating")
-        # print(num_validation_batches)
-        for epoch in tqdm.tqdm(range(1)):
-            total_rmse = 0.0
+            ## raise NotImplementedError()
+            # we don't want that _current_state's value
+            # would be changed by the affect of validation samples
+            _val_current_state = tuple((_current_state[0].copy(), _current_state[1].copy()))
+             
+            print("==> validating")
             for i, data in tqdm.tqdm(enumerate(val_loader, 0), total=num_validation_batches):
                 if i == 0:
                     history = []
@@ -335,22 +358,16 @@ def train(train_params):
                 _x = _x.reshape((-1, look_back, input_num_features))
                 _y = _y.reshape((-1, output_num_features))
 
-                _pred, _summary, _current_state = sess.run([
+                _pred, _summary, _val_current_state = sess.run([
                     prediction, merged_summary, current_state],
                     feed_dict = {
                         x: _x,
                         y: _y,
-                        init_state_0_c: _current_state[0],
-                        init_state_0_h: _current_state[1]
+                        init_state_0_c: _val_current_state[0],
+                        init_state_0_h: _val_current_state[1]
                     }
                 )
 
-                # print(_pred.shape)
-                # print(type(_pred))
-                # print(_pred)
-                # _pred = np.squeeze(_pred, axis=0)
-                # print(_pred, _pred.shape)
-                # prediction_inverse = inverse_transforms(_pred, scaler)
                 prediction_inverse = invert_scale(scaler, _x, _pred)
                 # prediction_inverse = prediction_inverse.squeeze(axis=0)
                 prediction_inverse = inverse_difference(raw_values, prediction_inverse, \
@@ -358,29 +375,32 @@ def train(train_params):
                 predictions.append(prediction_inverse)
                 ground_truths.append(raw_values[train_set_size + i + 1])    # why +1 ?
                 # rmse = sqrt(mean_squared_error(prediction_inverse, _y))
-                print("predicted = {}, groud truth = {}".format(prediction_inverse, \
-                    raw_values[train_set_size + i + 1]))
+                # print("predicted = {}, groud truth = {}".format(prediction_inverse, \
+                #     raw_values[train_set_size + i + 1]))
 
-                # print("rmse: {}".format(rmse))
-                # print("\n")
-                # total_rmse += rmse
+            predictions = np.array(predictions)
+            print("predictions.shape = {}, y_validation.shape = {}".format(
+                predictions.shape, y_validation.shape))
+
+            rmse = sqrt(mean_squared_error(y_validation, predictions))
+            print("validation rmse = {}".format(rmse))
+            if rmse < best_model_rmse:
+                print("best model")
+                # print("current validationin rmse = {}\n".format(rmse) + 
+                #       "best model !\n" + 
+                #       "better than previous best model's rmse = {}\nsaving current model".format(
+                #         best_model_rmse))
+                saver.save(sess, model_save_path)  # save only if better than current best
+                best_model_rmse = rmse
+   
+            if visualize:
+                plt.plot(ground_truths, 'r')
+                plt.plot(predictions, 'b')
+                plt.show()
+
 
         val_writer.close()
-
-        # total_rmse /= num_validation_batches
-        # rmse_2 = sqrt(mean_squared_error(ground_truths, predictions))
-        predictions = np.array(predictions)
-        print("predictions.shape = {}, y_validation.shape = {}".format(
-            predictions.shape, y_validation.shape))
-        rmse_2 = sqrt(mean_squared_error(y_validation, predictions))
-
-        # print("validation rmse: {}".format(total_rmse))
-        print("validation rmse 2: {}".format(rmse_2))
-        if visualize:
-            plt.plot(ground_truths, 'r')
-            plt.plot(predictions, 'b')
-            plt.show()
-
+        train_writer.close()
 
 def main(args):
     # ************** params **************

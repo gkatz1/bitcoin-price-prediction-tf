@@ -81,28 +81,63 @@ def preprocess_data(data_params):
     dataset_path = data_params["dataset_path"]
     num_features = data_params['input_num_features'], data_params['output_num_features']
 
+    b_data = pd.read_csv(dataset_path)
+    # print(data.isnull().values.any())
+    # print(data.head(10))
 
-    b_data = pd.read_csv(dataset_path, usecols=['Timestamp', 'Close'], 
-        squeeze=True, index_col=0, parse_dates=[0], date_parser=timestamp_parser)
+    b_data['date'] = pd.to_datetime(b_data['Timestamp'],unit='s').dt.date
+    group = b_data.groupby('date')
+    b_data = group['Weighted_Price'].mean()    
+    b_data = b_data[date(2016,1,1):date(2017, 10, 15)]
+    print(len(b_data))
+    print(b_data.tail())
+
+    d0 = date(2016, 1, 1)
+    d1 = date(2017, 10, 15)
+    delta = d1 - d0
+    days_look = delta.days + 1
+    print(days_look)
+
+    d0 = date(2017, 8, 21)
+    d1 = date(2018, 6, 27)
+    delta = d1 - d0
+    days_from_train = delta.days + 1
+    print(days_from_train)
+
+    d0 = date(2017, 10, 15)
+    d1 = date(2018, 6, 27)
+    delta = d1 - d0
+    days_from_end = delta.days + 1
+    print(days_from_end)
 
 
-    # start = b_data.index.searchsorted(dt.datetime(2018, 1, 2))
-    # end = b_data.index.searchsorted(dt.datetime(2018, 1, 6))
-    start = b_data.index.searchsorted(dt.datetime(2018, 1, 2))
-    end = b_data.index.searchsorted(dt.datetime(2018, 1, 6))
-    b_data = b_data[start:end]
+    d0 = date(2017, 10, 20)    
+    d1 = date(2018, 6, 27)
+    delta = (d1 - d0)
+    days_from_end_2 = delta.days + 1
+    
+
+    df_train = b_data[len(b_data)-days_look-days_from_end:len(b_data)-days_from_train]
+    df_test = b_data[len(b_data)-days_from_train:len(b_data) - days_from_end_2 + 1]
+
+    print(len(df_train), len(df_test))
+
     num_samples = len(b_data.index)
     raw_values = b_data.values
 
-    print(raw_values)
+    with open('debug_file', 'w') as f:
+        for el in raw_values:
+            f.write("%3f " % el)
+        f.write("\n\n")
+
     print("min = {}, max = {}, num samples = {}".format(
         min(raw_values), max(raw_values), num_samples))
     # raise NotImplementedError()
  
     print(b_data.head())
     print(num_samples)
-    print(raw_values)
-    print(type(raw_values))
+    # print(raw_values)
+    # print(type(raw_values))
     
     # train_start_idx = 0
     # train_end_idx = int(train_set_fraction * num_samples)
@@ -122,23 +157,9 @@ def preprocess_data(data_params):
     print("training set size = {}, validation set size = {}".format(
         max(train.shape), max(test.shape)))
 
-    train_x, train_y = train_scaled[:, 0:-1], train_scaled[:, -1]
-    test_x = test_scaled[:, 0:-1]
+    train_x, train_y = train[:, 0:-1], train[:, -1]
+    test_x = test[:, 0:-1]
     test_y = raw_values[-int(num_samples * test_set_fraction):]
-    with open("train_x", 'w') as f:
-        for el in train_x:
-            f.write("%3f " % el)
-    with open("train_y", 'w') as f:
-        for el in train_y:
-            f.write("%3f " % el)
-    with open("test_x", 'w') as f:
-        for el in test_x:
-            f.write("%3f " % el)
-    with open("test_y", 'w') as f:
-        for el in test_y:
-            f.write("%3f " % el)
-    # raise NotImplementedError()
-
     print("test_x.shape = {}, test_y.shape = {}".format(
         test_x.shape, test_y.shape))
     
@@ -177,7 +198,7 @@ def get_hyperparams():
         'learning_rate' : 1e-3,
         'look_back' : 1,
         'prediction_step' : 1,
-        'train_set_fraction' : 0.75,
+        'train_set_fraction' : 0.91,
         'num_epochs' : 30,
         'batch_size' : 1,
         'n_hidden' : 256,
@@ -301,6 +322,9 @@ def train(train_params):
                 _x, _y = data
                 _x = _x.reshape((-1, look_back, input_num_features))
                 _y = _y.reshape((-1, output_num_features))
+                print("x = {}".format(_x))  # debug
+                print("y = {}".format(_y))
+                # raise NotImplementedError()
                 _pred, _loss, _, _summary, _current_state = sess.run([
                     prediction, loss, optimizer, merged_summary, current_state],
                     feed_dict = {

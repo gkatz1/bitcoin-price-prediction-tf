@@ -180,10 +180,11 @@ def get_hyperparams():
         'train_set_fraction' : 0.75,
         'num_epochs' : 30,
         'batch_size' : 1,
-        'n_hidden' : 256,
+        'n_hidden' : 64,
         'num_layers' : 3,
         'input_num_features' : 1,
-        'output_num_features' : 1
+        'output_num_features' : 1,
+        'keep_prob' : 0.5
     }
     return params
 
@@ -203,6 +204,7 @@ def train(train_params):
     look_back = model_params['look_back']
     n_hidden = model_params['n_hidden']
     learning_rate = model_params['learning_rate']
+    keep_prob = model_params['keep_prob']
     val_batch_size = batch_size
     visualize = train_params['visualize']
 
@@ -248,7 +250,7 @@ def train(train_params):
     }
 
     rnn_cell = tf.nn.rnn_cell.LSTMCell(n_hidden, state_is_tuple=True)
-
+    rnn_cell = tf.nn.rnn_cell.DropoutWrapper(rnn_cell, output_keep_prob=keep_prob)
     rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(init_state_0_c, init_state_0_h)
 
     outputs, current_state = tf.nn.dynamic_rnn(rnn_cell, x, initial_state=rnn_tuple_state)
