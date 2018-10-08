@@ -15,6 +15,9 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from math import sqrt
 from matplotlib import pyplot as plt
+import plotly.offline as py
+import plotly.graph_objs as go
+py.init_notebook_mode(connected=True)
 
 from utils.batch_generator import batch_generator
 
@@ -104,8 +107,8 @@ def preprocess_data(data_params):
 
     # start = b_data.index.searchsorted(dt.datetime(2018, 1, 2))
     # end = b_data.index.searchsorted(dt.datetime(2018, 1, 6))
-    start = b_data.index.searchsorted(dt.datetime(2018, 1, 2))
-    end = b_data.index.searchsorted(dt.datetime(2018, 1, 8))
+    start = b_data.index.searchsorted(dt.datetime(2018, 1, 1))
+    end = b_data.index.searchsorted(dt.datetime(2018, 1, 2))
     b_data = b_data[start:end]
     num_samples = len(b_data.index)
     raw_values = b_data.values
@@ -287,7 +290,7 @@ def validate(validation_params):
             }
         )
 
-        val_writer.add_summary(_summary, i + num_validation_batches * epoch)
+        # val_writer.add_summary(_summary, i + num_validation_batches * epoch)
         prediction_inverse = invert_scale(scaler, _x, _pred)
         # prediction_inverse = prediction_inverse.squeeze(axis=0)
         prediction_inverse = inverse_difference(raw_values, prediction_inverse, \
@@ -314,12 +317,48 @@ def validate(validation_params):
         save_current_state(model_save_path, _current_state)
         # best_model_rmse = rmse
         validation_params['best_model_rmse'] = rmse
+        
+        rmse_file_path = os.path.join(os.path.dirname(model_save_path),
+            'rmse')
+        with open(rmse_file_path, 'w') as f:
+            f.write("rmse = {:.3f}".format(rmse))
 
-    if visualize:
-        plt.plot(ground_truths, 'r')
-        plt.plot(predictions, 'b')
-        plt.show()
+    if visualize and rmse < best_model_rmse:
+        # plt.ion()
+        # plt.show()
+        ## plt.plot(y_validation, color='red', linewidth=1.5)
+        ## plt.plot(predictions, color='blue', linewidth=1.5)
+        # plt.draw()
+        # plt.pause(1)
+        ## plt.show()
+        dates = list(range(len(predictions)))  # tmp
+        plots_file_path = os.path.join(os.path.dirname(model_save_path),
+            'graph')
+        trace0 = go.Scatter(
+            x = dates,
+            y = predictions,
+            name = 'predictions',
+            line = dict(
+                color = ('rgb(205, 12, 24)'),
+                width = 2)
+        )
+        trace1 = go.Scatter(
+            x = dates,
+            y = y_validation,
+            name = 'ground truths',
+            line = dict(
+                color = ('rgb(22, 96, 167)'),
+                width = 2)
+        )
+        data = [trace0, trace1]
+        layout = dict(title = 'Bitcoin Price Prediction, rmse = {:.3f}'.format(
+                      rmse),
+                      xaxis = dict(title = 'time (min)'),
+                      yaxis = dict(title = 'Price (BTC/USD)'),
+                      )
 
+        fig = dict(data=data, layout=layout)
+        py.plot(fig, filename=plots_file_path)
 
 def train(train_params):
 
