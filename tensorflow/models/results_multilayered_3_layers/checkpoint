@@ -1,0 +1,2 @@
+model_checkpoint_path: "results_multilayered_3_layers"
+all_model_checkpoint_paths: "results_multilayered_3_layers"
