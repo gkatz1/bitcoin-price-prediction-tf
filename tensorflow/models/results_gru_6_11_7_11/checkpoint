@@ -1,0 +1,2 @@
+model_checkpoint_path: "results_gru_6_11_7_11"
+all_model_checkpoint_paths: "results_gru_6_11_7_11"
