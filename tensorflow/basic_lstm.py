@@ -1,3 +1,4 @@
+import pickle
 import os
 import random
 import tqdm
@@ -14,6 +15,9 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from math import sqrt
 from matplotlib import pyplot as plt
+import plotly.offline as py
+import plotly.graph_objs as go
+py.init_notebook_mode(connected=True)
 
 from utils.batch_generator import batch_generator
 
@@ -22,6 +26,21 @@ tf.reset_default_graph()
 
 # TODO:
 # run training on gpu
+
+
+# *********** helper functions ***********
+def cmp_tuples(tup1, tup2):
+    """"compares 2 tuples
+    returns True if equal
+    compatible for the _current_state tuple structure only    
+    """
+    return False   # debugging
+
+    print(tup2)
+    for (sub_tup1, sub_tup2) in zip(tup1, tup2):
+        if sorted(sub_tup1) != sorted(sub_tup2):
+            return False
+    return True
 
 # *********** data processing ***********
 def to_supervised(data, look_back=1):
@@ -43,9 +62,9 @@ def difference(data, interval=1):
 
 # invert differenced value
 def inverse_difference(history, yhat, interval=1):
-    print("inverse_difference")
-    print("history.shape ={}".format(history.shape))
-    print("yhat.shape ={}".format(yhat.shape))
+    # print("inverse_difference")
+    # print("history.shape ={}".format(history.shape))
+    # print("yhat.shape ={}".format(yhat.shape))
     return yhat + history[-interval]
 
 # scale
@@ -87,12 +106,15 @@ def preprocess_data(data_params):
 
 
     # start = b_data.index.searchsorted(dt.datetime(2018, 1, 2))
-    # end = b_data.index.searchsorted(dt.datetime(2018, 1, 6))
-    start = b_data.index.searchsorted(dt.datetime(2018, 1, 2))
-    end = b_data.index.searchsorted(dt.datetime(2018, 1, 6))
+    # end = b_data.index.searchsorted(dt.datetime(2018, 1, 3))
+    start = b_data.index.searchsorted(dt.datetime(2017, 6, 11))
+    end = b_data.index.searchsorted(dt.datetime(2017, 7, 11))
     b_data = b_data[start:end]
     num_samples = len(b_data.index)
     raw_values = b_data.values
+    print(np.max(raw_values))
+    print(np.min(raw_values))
+  
 
     print(raw_values)
     print("min = {}, max = {}, num samples = {}".format(
@@ -155,6 +177,18 @@ def preprocess_data(data_params):
     return raw_values, train_x, train_y, test_x, test_y, scaler
 
 
+def load_current_state(model_path):
+    load_path = os.path.join(os.path.dirname(model_path), 'current_state.pkl')
+    with open(load_path, 'rb') as f:
+        current_state = pickle.load(f)
+    return current_state
+
+def save_current_state(model_path, current_state):
+    save_path = os.path.join(os.path.dirname(model_path), 'current_state.pkl')
+    with open(save_path, 'wb') as f:
+        pickle.dump(current_state, f)
+
+
 def inverse_transforms(data, scaler):
     """
     invese transforms:
@@ -181,12 +215,153 @@ def get_hyperparams():
         'num_epochs' : 30,
         'batch_size' : 1,
         'n_hidden' : 256,
-        'num_layers' : 3,
+        'num_layers' : 2,
         'input_num_features' : 1,
-        'output_num_features' : 1
+        'output_num_features' : 1,
+        'keep_prob' : 0.5
     }
     return params
 
+
+def validate(validation_params):
+    sess = validation_params['sess']
+    try:
+        _val_current_state = validation_params['_val_current_state']
+    except:
+        pass
+    raw_values = validation_params['raw_values']
+    y_validation = validation_params['y_validation']
+    validation_set_size = validation_params['validation_set_size']
+    val_loader = validation_params['val_loader']
+    val_writer = validation_params['val_writer']
+    scaler = validation_params['scaler']
+    num_validation_batches = validation_params['num_validation_batches'] 
+    look_back = validation_params['look_back'] 
+    epoch = validation_params['epoch'] 
+    input_num_features = validation_params['input_num_features'] 
+    output_num_features = validation_params['output_num_features'] 
+    placeholders = validation_params['placeholders']
+    x, y = placeholders['x'], placeholders['y']
+    init_state = placeholders['init_state']
+    sess_params = validation_params['sess_params']
+    prediction = sess_params['prediction']
+    merged_summary = sess_params['merged_summary']
+    current_state = sess_params['current_state']
+    saver = validation_params['saver']
+    model_save_path = validation_params['model_save_path']
+    visualize = validation_params['visualize']
+    best_model_rmse = validation_params['best_model_rmse']
+    _current_state = validation_params['_current_state']
+
+    try:
+        trained_model_path = validation_params['trained_model_path']
+    except:
+        pass
+    
+    if trained_model_path:
+        print("loading model from {}".format(trained_model_path))
+        saver.restore(sess, trained_model_path) 
+        all_vars = tf.global_variables()
+        for v in all_vars:
+            print(v.name)
+        _val_current_state = load_current_state(trained_model_path)
+        # _val_current_state = sess.run([current_state])    
+    
+    # what about the state?
+   
+    predictions = list()
+    ground_truths = list()
+
+    print("==> validating")
+    for i, data in tqdm.tqdm(enumerate(val_loader, 0), total=num_validation_batches):
+        if i == 0:
+            history = []
+        if i == num_validation_batches:
+            break
+        _x, _y = data
+        _x = _x.reshape((-1, look_back, input_num_features))
+        _y = _y.reshape((-1, output_num_features))
+
+        _pred, _summary, _val_current_state = sess.run([
+            prediction, merged_summary, current_state],
+            feed_dict = {
+                x: _x,
+                y: _y,
+                init_state: _val_current_state
+                ## init_state_0_c: _val_current_state[0],
+                ## init_state_0_h: _val_current_state[1]
+            }
+        )
+
+        # val_writer.add_summary(_summary, i + num_validation_batches * epoch)
+        prediction_inverse = invert_scale(scaler, _x, _pred)
+        # prediction_inverse = prediction_inverse.squeeze(axis=0)
+        prediction_inverse = inverse_difference(raw_values, prediction_inverse, \
+            validation_set_size + 1 - i)
+        predictions.append(prediction_inverse)
+        ## ground_truths.append(raw_values[train_set_size + i + 1])    # why +1 ?
+        # rmse = sqrt(mean_squared_error(prediction_inverse, _y))
+        # print("predicted = {}, groud truth = {}".format(prediction_inverse, \
+        #     raw_values[train_set_size + i + 1]))
+
+    predictions = np.array(predictions)
+    print("predictions.shape = {}, y_validation.shape = {}".format(
+        predictions.shape, y_validation.shape))
+
+    rmse = sqrt(mean_squared_error(y_validation, predictions))
+    print("validation rmse = {}".format(rmse))
+    if rmse < best_model_rmse and not trained_model_path:
+        print("best model")
+        # print("current validationin rmse = {}\n".format(rmse) +
+        #       "best model !\n" +
+        #       "better than previous best model's rmse = {}\nsaving current model".format(
+        #         best_model_rmse))
+        saver.save(sess, model_save_path)  # save only if better than current best
+        save_current_state(model_save_path, _current_state)
+        # best_model_rmse = rmse
+        validation_params['best_model_rmse'] = rmse
+        
+        rmse_file_path = os.path.join(os.path.dirname(model_save_path),
+            'rmse')
+        with open(rmse_file_path, 'w') as f:
+            f.write("rmse = {:.3f}".format(rmse))
+
+    if visualize and rmse < best_model_rmse:
+        # plt.ion()
+        # plt.show()
+        ## plt.plot(y_validation, color='red', linewidth=1.5)
+        ## plt.plot(predictions, color='blue', linewidth=1.5)
+        # plt.draw()
+        # plt.pause(1)
+        ## plt.show()
+        dates = list(range(len(predictions)))  # tmp
+        plots_file_path = os.path.join(os.path.dirname(model_save_path),
+            'graph')
+        trace0 = go.Scatter(
+            x = dates,
+            y = predictions,
+            name = 'predictions',
+            line = dict(
+                color = ('rgb(205, 12, 24)'),
+                width = 2)
+        )
+        trace1 = go.Scatter(
+            x = dates,
+            y = y_validation,
+            name = 'ground truths',
+            line = dict(
+                color = ('rgb(22, 96, 167)'),
+                width = 2)
+        )
+        data = [trace0, trace1]
+        layout = dict(title = 'Bitcoin Price Prediction, rmse = {:.3f}'.format(
+                      rmse),
+                      xaxis = dict(title = 'time (min)'),
+                      yaxis = dict(title = 'Price (BTC/USD)'),
+                      )
+
+        fig = dict(data=data, layout=layout)
+        py.plot(fig, filename=plots_file_path)
 
 def train(train_params):
 
@@ -203,8 +378,12 @@ def train(train_params):
     look_back = model_params['look_back']
     n_hidden = model_params['n_hidden']
     learning_rate = model_params['learning_rate']
+    num_layers = model_params['num_layers']
+    keep_prob = model_params['keep_prob']
     val_batch_size = batch_size
     visualize = train_params['visualize']
+    validate_only = train_params['validate_only']
+    trained_model_path = train_params['trained_model_path']
 
     raw_values, X_train, y_train, X_validation, y_validation, scaler = preprocess_data(data_params)
     print(raw_values.shape, X_train.shape, y_train.shape, X_validation.shape, y_validation.shape)
@@ -230,8 +409,9 @@ def train(train_params):
     x = tf.placeholder(tf.float32, [None, look_back, input_num_features]) # 1 feature (price)
     y = tf.placeholder(tf.float32, [None, output_num_features])
 
-    init_state_0_c = tf.placeholder(tf.float32, [None, n_hidden])
-    init_state_0_h = tf.placeholder(tf.float32, [None, n_hidden])
+    init_state = tf.placeholder(tf.float32, [2, None, n_hidden])
+    # init_state_0_c = tf.placeholder(tf.float32, [None, n_hidden])
+    # init_state_0_h = tf.placeholder(tf.float32, [None, n_hidden])
 
     # **** model ****
     n_hidden = model_params['n_hidden']
@@ -247,9 +427,10 @@ def train(train_params):
         'out': tf.Variable(tf.random_normal([prediction_num_features]))
     }
 
+    
     rnn_cell = tf.nn.rnn_cell.LSTMCell(n_hidden, state_is_tuple=True)
 
-    rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(init_state_0_c, init_state_0_h)
+    rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(init_state[0], init_state[1])
 
     outputs, current_state = tf.nn.dynamic_rnn(rnn_cell, x, initial_state=rnn_tuple_state)
     # cur_state_0_c = current_state.c
@@ -280,9 +461,18 @@ def train(train_params):
     merged_summary = tf.summary.merge_all()
     saver = tf.train.Saver()
 
-    _cur_state_0_c = np.zeros((batch_size, n_hidden), dtype=np.float32)
-    _cur_state_0_h = np.zeros((batch_size, n_hidden), dtype=np.float32)
-    _current_state = tuple((_cur_state_0_c, _cur_state_0_h))
+    ## _cur_state_0_c = np.zeros((batch_size, n_hidden), dtype=np.float32)
+    ## _cur_state_0_h = np.zeros((batch_size, n_hidden), dtype=np.float32)
+    ## _current_state = tuple((_cur_state_0_c, _cur_state_0_h))
+    _current_state = np.zeros((2, batch_size, n_hidden))
+
+
+    validation_set_size = data_params['validation_set_size']
+    train_set_size = data_params['training_set_size']
+
+    prev_current_state = None
+    best_model_rmse = float("inf")
+    _val_current_state = None
 
     ## print(_cur_state_0_c.shape)
     print("Run 'tensorboard --logdir=./{}' to checkout tensorboard logs.".format(logs_dir_path))
@@ -292,95 +482,68 @@ def train(train_params):
         sess.run(tf.global_variables_initializer())
         # training
         for epoch in tqdm.tqdm(range(num_epochs)):
-            train_rmse = 0.0
-            for i, data in tqdm.tqdm(enumerate(train_loader, 0), total=num_training_batches):
-                # print(i)
-                if i == num_training_batches:
-                    print("*" * 50)
-                    break
-                _x, _y = data
-                _x = _x.reshape((-1, look_back, input_num_features))
-                _y = _y.reshape((-1, output_num_features))
-                _pred, _loss, _, _summary, _current_state = sess.run([
-                    prediction, loss, optimizer, merged_summary, current_state],
-                    feed_dict = {
-                        x: _x,
-                        y: _y,
-                        init_state_0_c: _current_state[0],
-                        init_state_0_h: _current_state[1]
-                    }
-                )
+            # print("_current_state before training:") 
+            # print(_current_state)
+            # print("before == previous after? {}".format(cmp_tuples(_current_state, prev_current_state)))
+            if not validate_only:
+                for i, data in tqdm.tqdm(enumerate(train_loader, 0), total=num_training_batches):
+                    # print(i)
+                    if i == num_training_batches:
+                        print("*" * 50)
+                        break
+                    _x, _y = data
+                    _x = _x.reshape((-1, look_back, input_num_features))
+                    _y = _y.reshape((-1, output_num_features))
+                    _pred, _loss, _, _summary, _current_state = sess.run([
+                        prediction, loss, optimizer, merged_summary, current_state],
+                        feed_dict = {
+                            x: _x,
+                            y: _y,
+                            init_state: _current_state
+                            # init_state_0_c: _current_state[0],
+                            # init_state_0_h: _current_state[1]
+                        }
+                    )
 
+                
+                    train_writer.add_summary(_summary, i + num_training_batches * epoch)
+                    # _val_current_state = tuple((_current_state[0].copy(), _current_state[1].copy()))
+                    _val_current_state = pickle.loads(pickle.dumps(_current_state, -1))
 
-                train_writer.add_summary(_summary, i + num_training_batches * epoch)
+            validation_params = dict()
+            validation_params['sess'] = sess
+            validation_params['_current_state'] = _current_state   # just for saving it
+            validation_params['_val_current_state'] = _val_current_state
+            validation_params['raw_values'] = raw_values
+            validation_params['y_validation'] = y_validation
+            validation_params['validation_set_size'] = validation_set_size
+            validation_params['val_loader'] = val_loader
+            validation_params['val_writer'] = val_writer
+            validation_params['scaler'] = scaler
+            validation_params['num_validation_batches'] = num_validation_batches
+            validation_params['look_back'] = look_back
+            validation_params['epoch'] = epoch
+            validation_params['input_num_features'] = input_num_features
+            validation_params['output_num_features'] = output_num_features
+            validation_params['placeholders'] = {'x': x, 'y': y, 'init_state': init_state}
+            sess_params = dict()
+            sess_params['prediction'] = prediction
+            sess_params['merged_summary'] = merged_summary
+            sess_params['current_state'] = current_state
+            validation_params['sess_params'] = sess_params
+            validation_params['saver'] = saver
+            validation_params['model_save_path'] = model_save_path
+            validation_params['visualize'] = visualize
+            validation_params['best_model_rmse'] = best_model_rmse
+            validation_params['trained_model_path'] = trained_model_path
 
-        train_writer.close()
-        saver.save(sess, model_save_path)
-
-        validation_set_size = data_params['validation_set_size']
-        train_set_size = data_params['training_set_size']
-        predictions = list()
-        ground_truths = list()
-
-        print("==> validating")
-        # print(num_validation_batches)
-        for epoch in tqdm.tqdm(range(1)):
-            total_rmse = 0.0
-            for i, data in tqdm.tqdm(enumerate(val_loader, 0), total=num_validation_batches):
-                if i == 0:
-                    history = []
-                if i == num_validation_batches:
-                    break
-                _x, _y = data
-                _x = _x.reshape((-1, look_back, input_num_features))
-                _y = _y.reshape((-1, output_num_features))
-
-                _pred, _summary, _current_state = sess.run([
-                    prediction, merged_summary, current_state],
-                    feed_dict = {
-                        x: _x,
-                        y: _y,
-                        init_state_0_c: _current_state[0],
-                        init_state_0_h: _current_state[1]
-                    }
-                )
-
-                # print(_pred.shape)
-                # print(type(_pred))
-                # print(_pred)
-                # _pred = np.squeeze(_pred, axis=0)
-                # print(_pred, _pred.shape)
-                # prediction_inverse = inverse_transforms(_pred, scaler)
-                prediction_inverse = invert_scale(scaler, _x, _pred)
-                # prediction_inverse = prediction_inverse.squeeze(axis=0)
-                prediction_inverse = inverse_difference(raw_values, prediction_inverse, \
-                    validation_set_size + 1 - i)
-                predictions.append(prediction_inverse)
-                ground_truths.append(raw_values[train_set_size + i + 1])    # why +1 ?
-                # rmse = sqrt(mean_squared_error(prediction_inverse, _y))
-                print("predicted = {}, groud truth = {}".format(prediction_inverse, \
-                    raw_values[train_set_size + i + 1]))
-
-                # print("rmse: {}".format(rmse))
-                # print("\n")
-                # total_rmse += rmse
+            validate(validation_params)             
+            best_model_rmse = validation_params['best_model_rmse']
+            if validate_only:
+                break
 
         val_writer.close()
-
-        # total_rmse /= num_validation_batches
-        # rmse_2 = sqrt(mean_squared_error(ground_truths, predictions))
-        predictions = np.array(predictions)
-        print("predictions.shape = {}, y_validation.shape = {}".format(
-            predictions.shape, y_validation.shape))
-        rmse_2 = sqrt(mean_squared_error(y_validation, predictions))
-
-        # print("validation rmse: {}".format(total_rmse))
-        print("validation rmse 2: {}".format(rmse_2))
-        if visualize:
-            plt.plot(ground_truths, 'r')
-            plt.plot(predictions, 'b')
-            plt.show()
-
+        train_writer.close()
 
 def main(args):
     # ************** params **************
@@ -389,11 +552,18 @@ def main(args):
     time_now = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M")
     exp_name = args.experiment_name + '_' + time_now
     visualize = args.visualize
- 
+    validate_only = args.validate_only
+    trained_model_name = args.trained_model_name
+    trained_model_path = None
+
+    if trained_model_name:
+        trained_model_path = "models/{0}/{0}".format(trained_model_name) 
+
+
     logs_dir_path = './runs/{}/'.format(exp_name)
     writer = tf.summary.FileWriter(logs_dir_path)
-    model_save_path = "models/{0}/{0}.ckpt".format(args.experiment_name)
- 
+    model_save_path = "models/{0}/{0}".format(args.experiment_name)
+
     hyper_params = get_hyperparams()
     data_params = dict()
     data_params["dataset_path"] = dataset_path
@@ -407,7 +577,9 @@ def main(args):
         'model_params' : hyper_params,
         'model_save_path' : model_save_path,
         'logs_dir_path' : logs_dir_path,
-        'visualize' : visualize
+        'visualize' : visualize,
+        'validate_only': validate_only,
+        'trained_model_path': trained_model_path
     }
     
     # print("==> training")
@@ -419,6 +591,11 @@ if __name__ == '__main__':
                         help="experiment name")
     parser.add_argument('-v', '--visualize', action='store_true',
                         help="visualize results")
+    parser.add_argument('-vo', '--validate-only', action='store_true',
+                        help="only validate a trained model")
+    parser.add_argument('-m', '--trained-model-name', default=None,
+                        help='name of model to be validated')
+
     args = parser.parse_args()
     main(args)
 

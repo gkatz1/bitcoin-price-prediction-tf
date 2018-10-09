@@ -15,9 +15,6 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from math import sqrt
 from matplotlib import pyplot as plt
-import plotly.offline as py
-import plotly.graph_objs as go
-py.init_notebook_mode(connected=True)
 
 from utils.batch_generator import batch_generator
 
@@ -106,15 +103,12 @@ def preprocess_data(data_params):
 
 
     # start = b_data.index.searchsorted(dt.datetime(2018, 1, 2))
-    # end = b_data.index.searchsorted(dt.datetime(2018, 1, 3))
-    start = b_data.index.searchsorted(dt.datetime(2017, 6, 11))
-    end = b_data.index.searchsorted(dt.datetime(2017, 7, 11))
+    # end = b_data.index.searchsorted(dt.datetime(2018, 1, 6))
+    start = b_data.index.searchsorted(dt.datetime(2018, 1, 2))
+    end = b_data.index.searchsorted(dt.datetime(2018, 1, 30))
     b_data = b_data[start:end]
     num_samples = len(b_data.index)
     raw_values = b_data.values
-    print(np.max(raw_values))
-    print(np.min(raw_values))
-  
 
     print(raw_values)
     print("min = {}, max = {}, num samples = {}".format(
@@ -320,48 +314,12 @@ def validate(validation_params):
         save_current_state(model_save_path, _current_state)
         # best_model_rmse = rmse
         validation_params['best_model_rmse'] = rmse
-        
-        rmse_file_path = os.path.join(os.path.dirname(model_save_path),
-            'rmse')
-        with open(rmse_file_path, 'w') as f:
-            f.write("rmse = {:.3f}".format(rmse))
 
-    if visualize and rmse < best_model_rmse:
-        # plt.ion()
-        # plt.show()
-        ## plt.plot(y_validation, color='red', linewidth=1.5)
-        ## plt.plot(predictions, color='blue', linewidth=1.5)
-        # plt.draw()
-        # plt.pause(1)
-        ## plt.show()
-        dates = list(range(len(predictions)))  # tmp
-        plots_file_path = os.path.join(os.path.dirname(model_save_path),
-            'graph')
-        trace0 = go.Scatter(
-            x = dates,
-            y = predictions,
-            name = 'predictions',
-            line = dict(
-                color = ('rgb(205, 12, 24)'),
-                width = 2)
-        )
-        trace1 = go.Scatter(
-            x = dates,
-            y = y_validation,
-            name = 'ground truths',
-            line = dict(
-                color = ('rgb(22, 96, 167)'),
-                width = 2)
-        )
-        data = [trace0, trace1]
-        layout = dict(title = 'Bitcoin Price Prediction, rmse = {:.3f}'.format(
-                      rmse),
-                      xaxis = dict(title = 'time (min)'),
-                      yaxis = dict(title = 'Price (BTC/USD)'),
-                      )
+    if visualize:
+        plt.plot(ground_truths, 'r')
+        plt.plot(predictions, 'b')
+        plt.show()
 
-        fig = dict(data=data, layout=layout)
-        py.plot(fig, filename=plots_file_path)
 
 def train(train_params):
 
@@ -409,9 +367,9 @@ def train(train_params):
     x = tf.placeholder(tf.float32, [None, look_back, input_num_features]) # 1 feature (price)
     y = tf.placeholder(tf.float32, [None, output_num_features])
 
-    init_state = tf.placeholder(tf.float32, [2, None, n_hidden])
     # init_state_0_c = tf.placeholder(tf.float32, [None, n_hidden])
     # init_state_0_h = tf.placeholder(tf.float32, [None, n_hidden])
+    init_state = tf.placeholder(tf.float32, [None, n_hidden])
 
     # **** model ****
     n_hidden = model_params['n_hidden']
@@ -427,14 +385,9 @@ def train(train_params):
         'out': tf.Variable(tf.random_normal([prediction_num_features]))
     }
 
-    
-
-
-    rnn_cell = tf.nn.rnn_cell.LSTMCell(n_hidden, state_is_tuple=True)
-    rnn_cell = tf.nn.rnn_cell.DropoutWrapper(rnn_cell, output_keep_prob=keep_prob)
-    rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(init_state[0], init_state[1])
-
-    outputs, current_state = tf.nn.dynamic_rnn(rnn_cell, x, initial_state=rnn_tuple_state)
+    # rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(init_state_0_c, init_state_0_h)
+    rnn_cell = tf.nn.rnn_cell.BasicRNNCell(n_hidden)
+    outputs, current_state = tf.nn.dynamic_rnn(rnn_cell, x, initial_state=init_state)
     # cur_state_0_c = current_state.c
     # cur_state_0_h = current_state.h
 
@@ -466,7 +419,7 @@ def train(train_params):
     ## _cur_state_0_c = np.zeros((batch_size, n_hidden), dtype=np.float32)
     ## _cur_state_0_h = np.zeros((batch_size, n_hidden), dtype=np.float32)
     ## _current_state = tuple((_cur_state_0_c, _cur_state_0_h))
-    _current_state = np.zeros((2, batch_size, n_hidden))
+    _current_state = np.zeros((batch_size, n_hidden))
 
 
     validation_set_size = data_params['validation_set_size']

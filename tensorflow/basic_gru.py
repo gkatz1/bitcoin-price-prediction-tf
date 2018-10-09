@@ -409,7 +409,7 @@ def train(train_params):
     x = tf.placeholder(tf.float32, [None, look_back, input_num_features]) # 1 feature (price)
     y = tf.placeholder(tf.float32, [None, output_num_features])
 
-    init_state = tf.placeholder(tf.float32, [2, None, n_hidden])
+    init_state = tf.placeholder(tf.float32, [None, n_hidden])
     # init_state_0_c = tf.placeholder(tf.float32, [None, n_hidden])
     # init_state_0_h = tf.placeholder(tf.float32, [None, n_hidden])
 
@@ -428,13 +428,9 @@ def train(train_params):
     }
 
     
+    rnn_cell = tf.nn.rnn_cell.GRUCell(n_hidden)
 
-
-    rnn_cell = tf.nn.rnn_cell.LSTMCell(n_hidden, state_is_tuple=True)
-    rnn_cell = tf.nn.rnn_cell.DropoutWrapper(rnn_cell, output_keep_prob=keep_prob)
-    rnn_tuple_state = tf.nn.rnn_cell.LSTMStateTuple(init_state[0], init_state[1])
-
-    outputs, current_state = tf.nn.dynamic_rnn(rnn_cell, x, initial_state=rnn_tuple_state)
+    outputs, current_state = tf.nn.dynamic_rnn(rnn_cell, x, initial_state=init_state)
     # cur_state_0_c = current_state.c
     # cur_state_0_h = current_state.h
 
@@ -466,8 +462,7 @@ def train(train_params):
     ## _cur_state_0_c = np.zeros((batch_size, n_hidden), dtype=np.float32)
     ## _cur_state_0_h = np.zeros((batch_size, n_hidden), dtype=np.float32)
     ## _current_state = tuple((_cur_state_0_c, _cur_state_0_h))
-    _current_state = np.zeros((2, batch_size, n_hidden))
-
+    _current_state = np.zeros((batch_size, n_hidden))
 
     validation_set_size = data_params['validation_set_size']
     train_set_size = data_params['training_set_size']
